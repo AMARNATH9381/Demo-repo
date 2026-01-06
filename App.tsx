@@ -3,11 +3,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { TranscriptEntry, ConnectionStatus, MeetingSession } from './types';
 import { createPcmBlob, decode, decodeAudioData } from './services/audioUtils';
+import { apiService } from './services/apiService';
 import TranscriptFeed from './components/TranscriptFeed';
 import HistoryModal from './components/HistoryModal';
 
 const MODEL_NAME_LIVE = 'gemini-2.5-flash-native-audio-preview-09-2025';
-const MODEL_NAME_PRO = 'gemini-3-pro-preview';
+const MODEL_NAME_PRO = 'gemini-pro';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
@@ -17,10 +18,10 @@ const App: React.FC = () => {
   const [liveAssistantResponse, setLiveAssistantResponse] = useState<{ text: string; talkingPoints: string[] } | null>(null);
   const [liveInputText, setLiveInputText] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const [resumeText, setResumeText] = useState<string>(localStorage.getItem('pilot_resume') || '');
+  const [resumeText, setResumeText] = useState<string>('');
   const [isParsingResume, setIsParsingResume] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<MeetingSession[]>(JSON.parse(localStorage.getItem('pilot_history') || '[]'));
+  const [history, setHistory] = useState<MeetingSession[]>([]);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -38,12 +39,26 @@ const App: React.FC = () => {
   const isAiStudioEnv = () => typeof window !== 'undefined' && (window as any).aistudio;
 
   useEffect(() => {
-    localStorage.setItem('pilot_resume', resumeText);
-  }, [resumeText]);
+    const loadData = async () => {
+      try {
+        const [resumeData, sessionsData] = await Promise.all([
+          apiService.getResume(),
+          apiService.getSessions()
+        ]);
+        setResumeText(resumeData.resumeText);
+        setHistory(sessionsData.map(s => ({ ...s, transcript: JSON.parse(s.transcript) })));
+      } catch (err) {
+        console.error('Failed to load data:', err);
+      }
+    };
+    loadData();
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('pilot_history', JSON.stringify(history));
-  }, [history]);
+    if (resumeText) {
+      apiService.saveResume(resumeText).catch(err => console.error('Failed to save resume:', err));
+    }
+  }, [resumeText]);
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -66,7 +81,7 @@ const App: React.FC = () => {
         await (window as any).aistudio.openSelectKey();
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: 'AIzaSyB5_cu2F808faNmBz2meYNXRHctkXA9fPw' });
       if (file.type === 'text/plain') {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -85,10 +100,14 @@ const App: React.FC = () => {
               { inlineData: { data: base64Data, mimeType: file.type } },
               { text: "Extract professional context from this resume into clean sections. Focus on Amarnath M's expertise in AWS, Kubernetes, and CI/CD." }
             ]
-          }],
-          config: { thinkingConfig: { thinkingBudget: 4096 } }
+          }]
         });
-        if (response.text) setResumeText(response.text);
+        console.log('API Response:', response);
+        if (response.text) {
+          setResumeText(response.text);
+        } else {
+          console.log('No text in response');
+        }
         setIsParsingResume(false);
       }
     } catch (err: any) {
@@ -97,7 +116,7 @@ const App: React.FC = () => {
     }
   };
 
-  const stopMeeting = useCallback(() => {
+  const stopMeeting = useCallback(async () => {
     // Save to history before clearing
     if (transcript.length > 0) {
       const newSession: MeetingSession = {
@@ -106,7 +125,12 @@ const App: React.FC = () => {
         title: `Meeting on ${new Date().toLocaleDateString()}`,
         transcript: [...transcript]
       };
-      setHistory(prev => [newSession, ...prev]);
+      try {
+        await apiService.saveSession(newSession);
+        setHistory(prev => [newSession, ...prev]);
+      } catch (err) {
+        console.error('Failed to save session:', err);
+      }
     }
 
     if (sessionRef.current) sessionRef.current.close?.();
@@ -158,7 +182,7 @@ const App: React.FC = () => {
       setIsSharing(true);
       if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: 'AIzaSyB5_cu2F808faNmBz2meYNXRHctkXA9fPw' });
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = audioCtx;
@@ -279,13 +303,23 @@ const App: React.FC = () => {
     }
   };
 
-  const deleteSession = (id: string) => {
-    setHistory(prev => prev.filter(s => s.id !== id));
+  const deleteSession = async (id: string) => {
+    try {
+      await apiService.deleteSession(id);
+      setHistory(prev => prev.filter(s => s.id !== id));
+    } catch (err) {
+      console.error('Failed to delete session:', err);
+    }
   };
 
-  const clearAllHistory = () => {
+  const clearAllHistory = async () => {
     if (window.confirm("Are you sure you want to clear all meeting history? This cannot be undone.")) {
-      setHistory([]);
+      try {
+        await apiService.clearAllSessions();
+        setHistory([]);
+      } catch (err) {
+        console.error('Failed to clear history:', err);
+      }
     }
   };
 
