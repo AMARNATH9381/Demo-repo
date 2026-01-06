@@ -1,11 +1,13 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { TranscriptEntry, ConnectionStatus, MeetingSession } from './types';
 import { createPcmBlob, decode, decodeAudioData } from './services/audioUtils';
 import { apiService } from './services/apiService';
 import TranscriptFeed from './components/TranscriptFeed';
 import HistoryModal from './components/HistoryModal';
+import TranscriptOverlay from './components/TranscriptOverlay';
 
 const MODEL_NAME_LIVE = 'gemini-2.5-flash-native-audio-preview-09-2025';
 const MODEL_NAME_PRO = 'gemini-2.5-flash-lite';
@@ -35,6 +37,8 @@ const App: React.FC = () => {
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
   const lastPreviewUpdateRef = useRef<number>(0);
+
+  const [pipWindow, setPipWindow] = useState<Window | null>(null);
 
   const isAiStudioEnv = () => typeof window !== 'undefined' && (window as any).aistudio;
 
@@ -367,6 +371,72 @@ const App: React.FC = () => {
     }
   };
 
+  const togglePiP = async () => {
+    if (pipWindow) {
+      pipWindow.close();
+      setPipWindow(null);
+      return;
+    }
+
+    try {
+      // Check if Document Picture-in-Picture API is available
+      if ('documentPictureInPicture' in window) {
+        const pip = await (window as any).documentPictureInPicture.requestWindow({
+          width: 400,
+          height: 600,
+        });
+
+        // Copy styles
+        [...document.styleSheets].forEach((styleSheet) => {
+          try {
+            const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
+            const style = document.createElement('style');
+            style.textContent = cssRules;
+            pip.document.head.appendChild(style);
+          } catch (e) {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.type = styleSheet.type;
+            link.media = styleSheet.media;
+            link.href = styleSheet.href!;
+            pip.document.head.appendChild(link);
+          }
+        });
+
+        // Add base styles specifically for the PiP window to ensure glassmorphism works
+        const baseStyle = document.createElement('style');
+        baseStyle.textContent = `
+          html, body { 
+            margin: 0; 
+            padding: 0;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            color: #cbd5e1; 
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            overflow: hidden;
+          }
+          ::-webkit-scrollbar { width: 4px; }
+          ::-webkit-scrollbar-track { background: transparent; }
+          ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+          ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        `;
+        pip.document.head.appendChild(baseStyle);
+
+        pip.addEventListener('pagehide', () => {
+          setPipWindow(null);
+        });
+
+        setPipWindow(pip);
+      } else {
+        alert("Your browser doesn't support the Document Picture-in-Picture API. Please use Chrome or Edge 111+.");
+      }
+    } catch (err) {
+      console.error("Failed to open PiP window:", err);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#020617] text-slate-100 font-sans flex flex-col">
       <nav className="h-16 border-b border-white/5 bg-[#020617]/80 backdrop-blur-xl flex-none z-40 flex items-center justify-between px-8">
@@ -384,6 +454,26 @@ const App: React.FC = () => {
             </svg>
             <span>History</span>
           </button>
+
+          <button
+            onClick={togglePiP}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pipWindow
+              ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" className="hidden" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H10a2 2 0 01-2-2v-2zM4 6a2 2 0 012-2h12a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6z" />
+              {/* Using a simple stack/window icon for PiP */}
+              <rect x="14" y="14" width="8" height="8" rx="2" strokeWidth="2" fill="none" />
+              <path d="M4 10H14" strokeWidth="2" strokeLinecap="round" />
+              <path d="M4 6H14" strokeWidth="2" strokeLinecap="round" />
+              <path d="M4 14H10" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <span>HUD Overlay</span>
+          </button>
+
           {isSharing && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-1.5 rounded-full flex items-center space-x-2">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -447,6 +537,15 @@ const App: React.FC = () => {
           <span className="text-slate-300">{error}</span>
           <button onClick={() => setError(null)} className="uppercase text-[10px] font-black text-slate-500 hover:text-white">Dismiss</button>
         </div>
+      )}
+
+      {pipWindow && createPortal(
+        <TranscriptOverlay
+          transcript={transcript}
+          liveAssistantResponse={liveAssistantResponse}
+          liveInputText={liveInputText}
+        />,
+        pipWindow.document.body
       )}
     </div>
   );
