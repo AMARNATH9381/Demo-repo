@@ -5,12 +5,16 @@ interface TranscriptOverlayProps {
     transcript: TranscriptEntry[];
     liveAssistantResponse: { text: string; talkingPoints: string[] } | null;
     liveInputText: string;
+    status?: string;
+    error?: string | null;
 }
 
 const TranscriptOverlay: React.FC<TranscriptOverlayProps> = ({
     transcript,
     liveAssistantResponse,
-    liveInputText
+    liveInputText,
+    status = 'DISCONNECTED',
+    error = null
 }) => {
     const bottomRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -82,7 +86,26 @@ const TranscriptOverlay: React.FC<TranscriptOverlayProps> = ({
                 onScroll={handleScroll}
                 className="flex-1 overflow-y-auto space-y-8 pr-2 pb-2 custom-scrollbar"
             >
-                {transcript.length === 0 && !liveAssistantResponse && !liveInputText && (
+                {/* Status Indicator */}
+                <div className="sticky top-0 z-10 flex justify-center pointer-events-none">
+                    {error ? (
+                        <div className="bg-red-500/90 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-lg border border-red-400/50 flex items-center space-x-2">
+                            <span>⚠ {error}</span>
+                        </div>
+                    ) : status === 'CONNECTING' ? (
+                        <div className="bg-amber-500/90 text-black text-[10px] font-bold px-3 py-1 rounded-full shadow-lg border border-amber-400/50 flex items-center space-x-2">
+                            <div className="w-1.5 h-1.5 bg-black rounded-full animate-pulse" />
+                            <span>Connecting...</span>
+                        </div>
+                    ) : (liveInputText && !liveAssistantResponse) ? (
+                        <div className="bg-indigo-500/90 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-lg border border-indigo-400/50 flex items-center space-x-2">
+                            <div className="w-1.5 h-1.5 bg-white rounded-full animate-bounce" />
+                            <span>Processing...</span>
+                        </div>
+                    ) : null}
+                </div>
+
+                {transcript.length === 0 && !liveAssistantResponse && !liveInputText && !error && (
                     <div className="h-full flex flex-col items-center justify-center opacity-40 text-center space-y-6">
                         <div className="relative">
                             <div className="w-16 h-16 rounded-full border-2 border-indigo-500/30 flex items-center justify-center">

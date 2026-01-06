@@ -6,6 +6,8 @@ const OverlayWrapper: React.FC = () => {
     const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
     const [liveAssistantResponse, setLiveAssistantResponse] = useState<{ text: string; talkingPoints: string[] } | null>(null);
     const [liveInputText, setLiveInputText] = useState<string>('');
+    const [status, setStatus] = useState<string>('DISCONNECTED');
+    const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         let ipcRenderer: any;
@@ -22,6 +24,8 @@ const OverlayWrapper: React.FC = () => {
             if (data.transcript) setTranscript(data.transcript);
             if (data.liveAssistantResponse !== undefined) setLiveAssistantResponse(data.liveAssistantResponse);
             if (data.liveInputText !== undefined) setLiveInputText(data.liveInputText);
+            if (data.status) setStatus(data.status);
+            if (data.error !== undefined) setError(data.error);
         };
 
         ipcRenderer.on('update-overlay-data', handleUpdate);
@@ -74,6 +78,8 @@ const OverlayWrapper: React.FC = () => {
                         transcript={transcript}
                         liveAssistantResponse={liveAssistantResponse}
                         liveInputText={liveInputText}
+                        status={status}
+                        error={error}
                     />
                 </div>
             </div>

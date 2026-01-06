@@ -9,8 +9,8 @@ import TranscriptFeed from './components/TranscriptFeed';
 import HistoryModal from './components/HistoryModal';
 import TranscriptOverlay from './components/TranscriptOverlay';
 
-const MODEL_NAME_LIVE = 'gemini-2.5-flash-native-audio-preview-09-2025';
-const MODEL_NAME_PRO = 'gemini-2.5-flash-lite';
+const MODEL_NAME_LIVE = 'gemini-2.0-flash-exp';
+const MODEL_NAME_PRO = 'gemini-2.0-flash-exp';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
@@ -28,6 +28,7 @@ const App: React.FC = () => {
   // Dynamic API Key State
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
   const [showSettings, setShowSettings] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
 
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -242,7 +243,7 @@ const App: React.FC = () => {
 
       if (stream.getAudioTracks().length === 0) {
         stream.getTracks().forEach(t => t.stop());
-        throw new Error("System audio not detected. Ensure 'Share system audio' is selected during screen share.");
+        throw new Error("System audio not detected. Please select 'Same as System' audio or check 'Share Tab Audio' in the browser dialog.");
       }
 
       activeStreamRef.current = stream;
@@ -296,10 +297,10 @@ const App: React.FC = () => {
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME_LIVE,
         config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } },
+          responseModalities: [Modality.TEXT],
+          // speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } }, // Removed for text optimization
           inputAudioTranscription: {},
-          outputAudioTranscription: {},
+          // outputAudioTranscription: {}, // Not needed for TEXT modality
           systemInstruction,
         },
         callbacks: {
@@ -404,7 +405,8 @@ const App: React.FC = () => {
           },
           onerror: (e: any) => {
             console.error("Gemini Live Error:", e);
-            setError("Connection Error. Please ensure you have selected a valid Gemini API key.");
+            const errorMsg = e.message || "Connection Failed";
+            setError(`Connection Error: ${errorMsg}. Check API Key.`);
             stopMeeting();
           },
           onclose: () => stopMeeting(),
@@ -442,7 +444,9 @@ const App: React.FC = () => {
       ipcRenderer.send('update-overlay-data', {
         transcript,
         liveAssistantResponse,
-        liveInputText
+        liveInputText,
+        status,
+        error
       });
     } catch (e) {
       // Not in electron
@@ -574,13 +578,25 @@ const App: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Gemini API Key</label>
-                <input
-                  type="password"
-                  value={tempApiKey}
-                  onChange={(e) => setTempApiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
-                />
+                <div className="relative">
+                  <input
+                    type={showApiKey ? "text" : "password"}
+                    value={tempApiKey}
+                    onChange={(e) => setTempApiKey(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-black/50 border border-white/10 rounded-xl pl-4 pr-12 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                  />
+                  <button
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors"
+                  >
+                    {showApiKey ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                    )}
+                  </button>
+                </div>
                 <p className="mt-2 text-[10px] text-slate-500">
                   Your API key is stored locally in your browser and used directly to communicate with Google's servers.
                 </p>
