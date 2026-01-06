@@ -57,17 +57,8 @@ const App: React.FC = () => {
           try {
             const parsed = JSON.parse(savedTranscript);
             if (parsed.length > 0) {
-              // Create a recovered session
-              const recoveredSession: MeetingSession = {
-                id: `recovered_${Date.now()}`,
-                date: new Date().toLocaleString() + ' (Recovered)',
-                title: `Recovered Session ${new Date().toLocaleDateString()}`,
-                transcript: parsed
-              };
-              // Save it to backend immediately to persist it
-              await apiService.saveSession(recoveredSession);
-              setHistory(prev => [recoveredSession, ...prev]);
-              localStorage.removeItem('current_transcript'); // Clear after recovery
+              setTranscript(parsed);
+              // Do NOT clear localStorage here, wait for explicit stopMeeting
             }
           } catch (e) {
             console.error("Failed to recover session", e);
@@ -184,6 +175,7 @@ const App: React.FC = () => {
     setLiveAssistantResponse(null);
     setLiveInputText('');
     setTranscript([]); // Clear for next session
+    localStorage.removeItem('current_transcript');
   }, [transcript]);
 
   const parseStreamingResponse = (raw: string) => {
@@ -367,13 +359,11 @@ const App: React.FC = () => {
   };
 
   const clearAllHistory = async () => {
-    if (window.confirm("Are you sure you want to clear all meeting history? This cannot be undone.")) {
-      try {
-        await apiService.clearAllSessions();
-        setHistory([]);
-      } catch (err) {
-        console.error('Failed to clear history:', err);
-      }
+    try {
+      await apiService.clearAllSessions();
+      setHistory([]);
+    } catch (err) {
+      console.error('Failed to clear history:', err);
     }
   };
 
