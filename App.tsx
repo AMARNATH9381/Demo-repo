@@ -24,6 +24,11 @@ const App: React.FC = () => {
   const [isParsingResume, setIsParsingResume] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<MeetingSession[]>([]);
+  
+  // Dynamic API Key State
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
+  const [showSettings, setShowSettings] = useState(false);
+  const [tempApiKey, setTempApiKey] = useState('');
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -115,7 +120,14 @@ const App: React.FC = () => {
         await (window as any).aistudio.openSelectKey();
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      if (!apiKey) {
+        setShowSettings(true);
+        setError("Please configure your Gemini API Key in Settings.");
+        setIsParsingResume(false);
+        return;
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       if (file.type === 'text/plain') {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -217,7 +229,14 @@ const App: React.FC = () => {
       setIsSharing(true);
       if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
 
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      if (!apiKey) {
+        setShowSettings(true);
+        setError("Please configure your Gemini API Key in Settings.");
+        setStatus(ConnectionStatus.DISCONNECTED);
+        return;
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = audioCtx;
@@ -456,6 +475,20 @@ const App: React.FC = () => {
           </button>
 
           <button
+            onClick={() => {
+              setTempApiKey(apiKey);
+              setShowSettings(true);
+            }}
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+          >
+             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+             </svg>
+            <span>Settings</span>
+          </button>
+
+          <button
             onClick={togglePiP}
             className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pipWindow
               ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
@@ -526,6 +559,55 @@ const App: React.FC = () => {
           onDelete={deleteSession}
           onClearAll={clearAllHistory}
         />
+      )}
+
+      {showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+             <div className="flex items-center justify-between mb-6">
+              <h3 className="text-sm font-black uppercase tracking-widest text-white">Application Settings</h3>
+              <button onClick={() => setShowSettings(false)} className="text-slate-500 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Gemini API Key</label>
+                <input 
+                  type="password" 
+                  value={tempApiKey}
+                  onChange={(e) => setTempApiKey(e.target.value)}
+                  placeholder="AIzaSy..."
+                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors"
+                />
+                <p className="mt-2 text-[10px] text-slate-500">
+                  Your API key is stored locally in your browser and used directly to communicate with Google's servers.
+                </p>
+              </div>
+
+              <div className="pt-4 flex justify-end space-x-3">
+                <button 
+                  onClick={() => setShowSettings(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    setApiKey(tempApiKey);
+                    localStorage.setItem('gemini_api_key', tempApiKey);
+                    setShowSettings(false);
+                    setError(null);
+                  }}
+                  className="px-6 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
+                >
+                  Save Configuration
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {error && (

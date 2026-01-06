@@ -35,8 +35,7 @@ services:
   frontend:
     build:
       context: .
-      args:
-        GEMINI_API_KEY: AIzaSyBOFrt1Z0J4uK0epLcn0Jal2eneQF2eTKc
+
     ports:
       - "80:80"
     depends_on:
