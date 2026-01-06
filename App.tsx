@@ -8,7 +8,7 @@ import TranscriptFeed from './components/TranscriptFeed';
 import HistoryModal from './components/HistoryModal';
 
 const MODEL_NAME_LIVE = 'gemini-2.5-flash-native-audio-preview-09-2025';
-const MODEL_NAME_PRO = 'gemini-pro';
+const MODEL_NAME_PRO = 'gemini-2.5-flash-lite';
 
 const App: React.FC = () => {
   const [status, setStatus] = useState<ConnectionStatus>(ConnectionStatus.DISCONNECTED);
@@ -31,7 +31,7 @@ const App: React.FC = () => {
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const activeStreamRef = useRef<MediaStream | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
-  
+
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
   const lastPreviewUpdateRef = useRef<number>(0);
@@ -46,7 +46,34 @@ const App: React.FC = () => {
           apiService.getSessions()
         ]);
         setResumeText(resumeData.resumeText);
-        setHistory(sessionsData.map(s => ({ ...s, transcript: JSON.parse(s.transcript) })));
+        setHistory(sessionsData.map(s => ({
+          ...s,
+          transcript: typeof s.transcript === 'string' ? JSON.parse(s.transcript) : s.transcript
+        })));
+
+        // Recover unsaved session
+        const savedTranscript = localStorage.getItem('current_transcript');
+        if (savedTranscript) {
+          try {
+            const parsed = JSON.parse(savedTranscript);
+            if (parsed.length > 0) {
+              // Create a recovered session
+              const recoveredSession: MeetingSession = {
+                id: `recovered_${Date.now()}`,
+                date: new Date().toLocaleString() + ' (Recovered)',
+                title: `Recovered Session ${new Date().toLocaleDateString()}`,
+                transcript: parsed
+              };
+              // Save it to backend immediately to persist it
+              await apiService.saveSession(recoveredSession);
+              setHistory(prev => [recoveredSession, ...prev]);
+              localStorage.removeItem('current_transcript'); // Clear after recovery
+            }
+          } catch (e) {
+            console.error("Failed to recover session", e);
+          }
+        }
+
       } catch (err) {
         console.error('Failed to load data:', err);
       }
@@ -59,6 +86,18 @@ const App: React.FC = () => {
       apiService.saveResume(resumeText).catch(err => console.error('Failed to save resume:', err));
     }
   }, [resumeText]);
+
+  // Prevent accidental refresh/close during meeting
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (status === ConnectionStatus.CONNECTED) {
+        e.preventDefault();
+        e.returnValue = ''; // Trigger browser warning
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [status]);
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -81,7 +120,7 @@ const App: React.FC = () => {
         await (window as any).aistudio.openSelectKey();
       }
 
-      const ai = new GoogleGenAI({ apiKey: 'AIzaSyB5_cu2F808faNmBz2meYNXRHctkXA9fPw' });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       if (file.type === 'text/plain') {
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -135,10 +174,10 @@ const App: React.FC = () => {
 
     if (sessionRef.current) sessionRef.current.close?.();
     if (processorRef.current) processorRef.current.disconnect();
-    if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
-    if (outputAudioContextRef.current) outputAudioContextRef.current.close().catch(() => {});
+    if (audioContextRef.current) audioContextRef.current.close().catch(() => { });
+    if (outputAudioContextRef.current) outputAudioContextRef.current.close().catch(() => { });
     if (activeStreamRef.current) activeStreamRef.current.getTracks().forEach(t => t.stop());
-    
+
     setIsSharing(false);
     setAudioLevel(0);
     setStatus(ConnectionStatus.DISCONNECTED);
@@ -172,7 +211,7 @@ const App: React.FC = () => {
           noiseSuppression: true
         } as any
       });
-      
+
       if (stream.getAudioTracks().length === 0) {
         stream.getTracks().forEach(t => t.stop());
         throw new Error("System audio not detected. Ensure 'Share system audio' is selected during screen share.");
@@ -182,7 +221,7 @@ const App: React.FC = () => {
       setIsSharing(true);
       if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
 
-      const ai = new GoogleGenAI({ apiKey: 'AIzaSyB5_cu2F808faNmBz2meYNXRHctkXA9fPw' });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       const outputAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = audioCtx;
@@ -198,6 +237,11 @@ const App: React.FC = () => {
         - Tone: Senior Indian Technical Architect (Pragmatic, authoritative, polite, and helpful).
         - Mannerisms: Use phrases like "Actually, from my side...", "Kindly check if we can...", "Basically, in production we follow...", "In my previous experience with EKS...", "We can surely implement this using Terraform...", "Actually, looking at the current architecture...".
         - Style: Professional Indian English. Direct on technical points but respectful in tone.
+
+        STRICT LANGUAGE ENFORCEMENT: 
+        - You must ALWAYS speak in ENGLISH. 
+        - If the user or participant speaks in Hindi, Telugu, or any other language, you must MENTALLY translate it and respond ONLY in English. 
+        - Do NOT switch languages under any circumstances.
         
         EXPERT DEPTH REQUIREMENTS (MANDATORY):
         For every technical question or discussion:
@@ -224,21 +268,25 @@ const App: React.FC = () => {
           systemInstruction,
         },
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             setStatus(ConnectionStatus.CONNECTED);
             sessionPromise.then(s => { sessionRef.current = s; });
+
+            await audioCtx.audioWorklet.addModule('/audio-processor.js');
             const source = audioCtx.createMediaStreamSource(stream);
-            const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-            processorRef.current = processor;
-            processor.onaudioprocess = (e) => {
-              const data = e.inputBuffer.getChannelData(0);
+            const workletNode = new AudioWorkletNode(audioCtx, 'audio-processor');
+
+            workletNode.port.onmessage = (e) => {
+              const data = e.data;
               let max = 0;
               for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) > max) max = Math.abs(data[i]);
               setAudioLevel(max);
               sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(data) }));
             };
-            source.connect(processor);
-            processor.connect(audioCtx.destination);
+
+            source.connect(workletNode);
+            workletNode.connect(audioCtx.destination);
+            processorRef.current = workletNode as any;
           },
           onmessage: async (m: LiveServerMessage) => {
             const audioData = m.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
@@ -268,12 +316,18 @@ const App: React.FC = () => {
             if (m.serverContent?.turnComplete) {
               const uText = currentInputTranscriptionRef.current.trim();
               const finalParsed = parseStreamingResponse(currentOutputTranscriptionRef.current);
+
               if (uText || finalParsed.text) {
-                setTranscript(prev => [
-                  ...prev,
+                const newEntries: TranscriptEntry[] = [
                   ...(uText ? [{ id: `u_${Date.now()}`, speaker: 'Participant' as const, text: uText, timestamp: new Date().toLocaleTimeString(), isFinal: true }] : []),
                   ...(finalParsed.text ? [{ id: `a_${Date.now()}`, speaker: 'Assistant' as const, text: finalParsed.text, talkingPoints: finalParsed.talkingPoints, timestamp: new Date().toLocaleTimeString(), isFinal: true }] : [])
-                ]);
+                ];
+
+                setTranscript(prev => {
+                  const updated = [...prev, ...newEntries];
+                  localStorage.setItem('current_transcript', JSON.stringify(updated)); // Auto-save to local storage
+                  return updated;
+                });
               }
               currentInputTranscriptionRef.current = '';
               currentOutputTranscriptionRef.current = '';
@@ -282,17 +336,17 @@ const App: React.FC = () => {
             }
 
             if (m.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
+              sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) { } });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
               setLiveAssistantResponse(null);
               setLiveInputText('');
             }
           },
-          onerror: (e: any) => { 
+          onerror: (e: any) => {
             console.error("Gemini Live Error:", e);
             setError("Connection Error. Please ensure you have selected a valid Gemini API key.");
-            stopMeeting(); 
+            stopMeeting();
           },
           onclose: () => stopMeeting(),
         },
@@ -331,7 +385,7 @@ const App: React.FC = () => {
           <span className="text-xs font-black uppercase tracking-[0.2em]">Meeting Pilot</span>
         </div>
         <div className="flex items-center space-x-4">
-          <button 
+          <button
             onClick={() => setShowHistory(true)}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white hover:bg-white/5 transition-all"
           >
@@ -346,13 +400,12 @@ const App: React.FC = () => {
               <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Active Pilot</span>
             </div>
           )}
-          <button 
-            onClick={status === ConnectionStatus.CONNECTED ? stopMeeting : startMeeting} 
-            className={`px-8 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-              status === ConnectionStatus.CONNECTED 
-                ? 'bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-600 hover:text-white' 
-                : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-[0_0_20px_rgba(79,70,229,0.3)]'
-            }`}
+          <button
+            onClick={status === ConnectionStatus.CONNECTED ? stopMeeting : startMeeting}
+            className={`px-8 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${status === ConnectionStatus.CONNECTED
+              ? 'bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-600 hover:text-white'
+              : 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-[0_0_20px_rgba(79,70,229,0.3)]'
+              }`}
           >
             {status === ConnectionStatus.CONNECTED ? 'Stop Monitoring' : 'Start Session'}
           </button>
@@ -369,11 +422,11 @@ const App: React.FC = () => {
                 <input type="file" className="hidden" onChange={handleFileUpload} disabled={isParsingResume} />
               </label>
             </div>
-            <textarea 
-              value={resumeText} 
-              onChange={(e) => setResumeText(e.target.value)} 
-              placeholder="Paste professional background here..." 
-              className="flex-1 bg-slate-950/40 border border-white/5 rounded-xl p-4 text-xs text-slate-400 focus:outline-none resize-none custom-scrollbar leading-relaxed" 
+            <textarea
+              value={resumeText}
+              onChange={(e) => setResumeText(e.target.value)}
+              placeholder="Paste professional background here..."
+              className="flex-1 bg-slate-950/40 border border-white/5 rounded-xl p-4 text-xs text-slate-400 focus:outline-none resize-none custom-scrollbar leading-relaxed"
             />
           </div>
           <div className="h-48 flex-none bg-slate-900/40 rounded-2xl border border-white/5 overflow-hidden relative shadow-inner">
@@ -387,9 +440,9 @@ const App: React.FC = () => {
       </main>
 
       {showHistory && (
-        <HistoryModal 
-          history={history} 
-          onClose={() => setShowHistory(false)} 
+        <HistoryModal
+          history={history}
+          onClose={() => setShowHistory(false)}
           onDelete={deleteSession}
           onClearAll={clearAllHistory}
         />

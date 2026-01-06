@@ -11,10 +11,60 @@ interface HistoryModalProps {
 
 const HistoryModal: React.FC<HistoryModalProps> = ({ history, onClose, onDelete, onClearAll }) => {
   const [selectedSession, setSelectedSession] = useState<MeetingSession | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{ type: 'single' | 'all', id?: string } | null>(null);
+
+  const confirmAction = () => {
+    if (deleteConfirmation?.type === 'single' && deleteConfirmation.id) {
+      onDelete(deleteConfirmation.id);
+      if (selectedSession?.id === deleteConfirmation.id) setSelectedSession(null);
+    } else if (deleteConfirmation?.type === 'all') {
+      onClearAll();
+      setSelectedSession(null);
+    }
+    setDeleteConfirmation(null);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-5xl h-[80vh] bg-[#020617] border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+      <div className="w-full max-w-5xl h-[80vh] bg-[#020617] border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden relative">
+
+        {/* Custom Confirmation Overlay */}
+        {deleteConfirmation && (
+          <div className="absolute inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-slate-900 border border-white/10 p-8 rounded-2xl max-w-md w-full shadow-2xl space-y-6">
+              <div className="space-y-2 text-center">
+                <div className="w-12 h-12 mx-auto bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+                  <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-white">
+                  {deleteConfirmation.type === 'all' ? 'Clear All History?' : 'Delete Session?'}
+                </h3>
+                <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                  {deleteConfirmation.type === 'all'
+                    ? "This will permanently remove all recorded meetings and transcripts. This action cannot be undone."
+                    : "This will permanently remove this meeting transcript. This action cannot be undone."}
+                </p>
+              </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={() => setDeleteConfirmation(null)}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmAction}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/20 transition-all"
+                >
+                  {deleteConfirmation.type === 'all' ? 'Confirm Clear' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header */}
         <div className="flex-none px-8 py-6 border-b border-white/5 flex items-center justify-between bg-slate-900/40">
           <div className="flex items-center space-x-4">
@@ -28,7 +78,7 @@ const HistoryModal: React.FC<HistoryModalProps> = ({ history, onClose, onDelete,
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Access past pilot sessions</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="p-2 hover:bg-white/5 rounded-full transition-colors text-slate-400 hover:text-white"
           >
@@ -47,15 +97,15 @@ const HistoryModal: React.FC<HistoryModalProps> = ({ history, onClose, onDelete,
                 {history.length} Saved {history.length === 1 ? 'Session' : 'Sessions'}
               </span>
               {history.length > 0 && (
-                <button 
-                  onClick={onClearAll}
+                <button
+                  onClick={() => setDeleteConfirmation({ type: 'all' })}
                   className="text-[9px] font-black uppercase tracking-widest text-red-500/60 hover:text-red-400 transition-colors"
                 >
                   Clear All
                 </button>
               )}
             </div>
-            
+
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-2">
               {history.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center opacity-20 px-8 text-center">
@@ -66,24 +116,20 @@ const HistoryModal: React.FC<HistoryModalProps> = ({ history, onClose, onDelete,
                 </div>
               ) : (
                 history.map((session) => (
-                  <div 
+                  <div
                     key={session.id}
                     onClick={() => setSelectedSession(session)}
-                    className={`group relative p-4 rounded-2xl border transition-all cursor-pointer ${
-                      selectedSession?.id === session.id 
-                        ? 'bg-indigo-600/10 border-indigo-500/50' 
+                    className={`group relative p-4 rounded-2xl border transition-all cursor-pointer ${selectedSession?.id === session.id
+                        ? 'bg-indigo-600/10 border-indigo-500/50'
                         : 'bg-white/5 border-transparent hover:border-white/10 hover:bg-white/[0.07]'
-                    }`}
+                      }`}
                   >
                     <div className="flex justify-between items-start mb-1">
                       <h3 className="text-xs font-bold text-slate-200 truncate pr-4">{session.title}</h3>
-                      <button 
+                      <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (window.confirm("Delete this session?")) {
-                            onDelete(session.id);
-                            if (selectedSession?.id === session.id) setSelectedSession(null);
-                          }
+                          setDeleteConfirmation({ type: 'single', id: session.id });
                         }}
                         className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-all"
                       >
@@ -120,25 +166,22 @@ const HistoryModal: React.FC<HistoryModalProps> = ({ history, onClose, onDelete,
                     {selectedSession.transcript.map((entry) => (
                       <div key={entry.id} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                         <div className="flex items-center space-x-3 mb-3">
-                          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
-                            entry.speaker === 'Assistant' 
-                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                          <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${entry.speaker === 'Assistant'
+                              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                               : 'bg-slate-800 text-slate-400 border border-slate-700'
-                          }`}>
+                            }`}>
                             {entry.speaker}
                           </span>
                           <span className="text-[9px] font-bold text-slate-600 tabular-nums">{entry.timestamp}</span>
                         </div>
-                        
-                        <div className={`pl-4 border-l-2 ${
-                          entry.speaker === 'Assistant' ? 'border-emerald-500/50 bg-emerald-500/[0.02] py-4 rounded-r-2xl' : 'border-slate-800 py-1'
-                        }`}>
-                          <p className={`text-sm leading-relaxed whitespace-pre-wrap ${
-                            entry.speaker === 'Assistant' ? 'text-slate-100 font-medium' : 'text-slate-300'
+
+                        <div className={`pl-4 border-l-2 ${entry.speaker === 'Assistant' ? 'border-emerald-500/50 bg-emerald-500/[0.02] py-4 rounded-r-2xl' : 'border-slate-800 py-1'
                           }`}>
+                          <p className={`text-sm leading-relaxed whitespace-pre-wrap ${entry.speaker === 'Assistant' ? 'text-slate-100 font-medium' : 'text-slate-300'
+                            }`}>
                             {entry.text}
                           </p>
-                          
+
                           {entry.talkingPoints && entry.talkingPoints.length > 0 && (
                             <div className="mt-4 pt-4 border-t border-white/5">
                               <span className="text-[8px] font-black text-emerald-500/60 uppercase tracking-widest mb-3 block">Extracted Evidence</span>
