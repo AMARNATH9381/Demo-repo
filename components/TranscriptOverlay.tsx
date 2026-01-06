@@ -75,7 +75,7 @@ const TranscriptOverlay: React.FC<TranscriptOverlayProps> = ({
     };
 
     return (
-        <div className="h-full w-full bg-slate-950/90 backdrop-blur-xl text-slate-200 p-4 flex flex-col overflow-hidden font-sans selection:bg-indigo-500/30">
+        <div className="h-full w-full bg-transparent text-slate-200 p-4 flex flex-col overflow-hidden font-sans selection:bg-indigo-500/30">
             {/* Scroll Container */}
             <div
                 ref={scrollContainerRef}

@@ -24,7 +24,7 @@ const App: React.FC = () => {
   const [isParsingResume, setIsParsingResume] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<MeetingSession[]>([]);
-  
+
   // Dynamic API Key State
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('gemini_api_key') || '');
   const [showSettings, setShowSettings] = useState(false);
@@ -43,7 +43,27 @@ const App: React.FC = () => {
   const currentOutputTranscriptionRef = useRef('');
   const lastPreviewUpdateRef = useRef<number>(0);
 
-  const [pipWindow, setPipWindow] = useState<Window | null>(null);
+
+  const [pickerSources, setPickerSources] = useState<any[]>([]);
+
+  // Electron IPC for Screen Picker
+  useEffect(() => {
+    if ((window as any).require) {
+      const { ipcRenderer } = (window as any).require('electron');
+      ipcRenderer.on('show-screen-picker', (_event: any, sources: any[]) => {
+        // Hydrate the thumbnail images from NativeImage format if needed, 
+        // but Electron passes them as NativeImage objects which have toUrl() or we can use them directly if strict serialization isnt an issue.
+        // Actually over IPC, NativeImage becomes a simplified object. We usually need to convert to dataURL on the main side or handling serialization.
+        // Let's assume for now default serialization works or we might need a small tweak.
+        // Update: NativeImage doesn't serialize fully over IPC usually. Best to send dataURLs from main. 
+        // Or we can rely on standard electron behavior. Let's try direct first.
+        setPickerSources(sources);
+      });
+      return () => {
+        ipcRenderer.removeAllListeners('show-screen-picker');
+      };
+    }
+  }, []);
 
   const isAiStudioEnv = () => typeof window !== 'undefined' && (window as any).aistudio;
 
@@ -287,11 +307,14 @@ const App: React.FC = () => {
             setStatus(ConnectionStatus.CONNECTED);
             sessionPromise.then(s => { sessionRef.current = s; });
 
-            await audioCtx.audioWorklet.addModule('/audio-processor.js');
+            await audioCtx.audioWorklet.addModule('audio-processor.js');
             const source = audioCtx.createMediaStreamSource(stream);
             const workletNode = new AudioWorkletNode(audioCtx, 'audio-processor');
 
             workletNode.port.onmessage = (e) => {
+              // Prevent feedback loop: Don't send input to AI if AI itself is speaking
+              if (sourcesRef.current.size > 0) return;
+
               const data = e.data;
               let max = 0;
               for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) > max) max = Math.abs(data[i]);
@@ -305,17 +328,18 @@ const App: React.FC = () => {
           },
           onmessage: async (m: LiveServerMessage) => {
             const audioData = m.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (audioData) {
-              const buffer = await decodeAudioData(decode(audioData), outputAudioCtx, 24000, 1);
-              const source = outputAudioCtx.createBufferSource();
-              source.buffer = buffer;
-              source.connect(outputAudioCtx.destination);
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioCtx.currentTime);
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += buffer.duration;
-              sourcesRef.current.add(source);
-              source.onended = () => sourcesRef.current.delete(source);
-            }
+            // DISABLE AUDIO OUTPUT (TEXT ONLY MODE)
+            // if (audioData) {
+            //   const buffer = await decodeAudioData(decode(audioData), outputAudioCtx, 24000, 1);
+            //   const source = outputAudioCtx.createBufferSource();
+            //   source.buffer = buffer;
+            //   source.connect(outputAudioCtx.destination);
+            //   nextStartTimeRef.current = Math.max(nextStartTimeRef.current, outputAudioCtx.currentTime);
+            //   source.start(nextStartTimeRef.current);
+            //   nextStartTimeRef.current += buffer.duration;
+            //   sourcesRef.current.add(source);
+            //   source.onended = () => sourcesRef.current.delete(source);
+            // }
 
             if (m.serverContent?.outputTranscription) {
               currentOutputTranscriptionRef.current += m.serverContent.outputTranscription.text;
@@ -354,8 +378,28 @@ const App: React.FC = () => {
               sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) { } });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
+
+              // On interrupt, save the PARTIAL response instead of discarding it
+              // This allows the user to read what was generated so far even if a new question comes in.
+              const partialParsed = parseStreamingResponse(currentOutputTranscriptionRef.current);
+              if (partialParsed.text) {
+                const newEntries: TranscriptEntry[] = [
+                  { id: `a_part_${Date.now()}`, speaker: 'Assistant' as const, text: partialParsed.text + " (Interrupted)", talkingPoints: partialParsed.talkingPoints, timestamp: new Date().toLocaleTimeString(), isFinal: true }
+                ];
+                setTranscript(prev => {
+                  const updated = [...prev, ...newEntries];
+                  localStorage.setItem('current_transcript', JSON.stringify(updated));
+                  return updated;
+                });
+              }
+
               setLiveAssistantResponse(null);
               setLiveInputText('');
+              currentOutputTranscriptionRef.current = ''; // Reset for new turn
+              // Keep input ref? No, interruption usually means input is done or new input started.
+              // Actually, inputTranscription might be flowing for the NEW utterance.
+              // Let's safe-clear currentInput unless we want to debug.
+              // currentInputTranscriptionRef.current = ''; 
             }
           },
           onerror: (e: any) => {
@@ -390,69 +434,28 @@ const App: React.FC = () => {
     }
   };
 
-  const togglePiP = async () => {
-    if (pipWindow) {
-      pipWindow.close();
-      setPipWindow(null);
-      return;
-    }
-
+  // Sync data with overlay
+  useEffect(() => {
     try {
-      // Check if Document Picture-in-Picture API is available
-      if ('documentPictureInPicture' in window) {
-        const pip = await (window as any).documentPictureInPicture.requestWindow({
-          width: 400,
-          height: 600,
-        });
+      // @ts-ignore
+      const { ipcRenderer } = window.require('electron');
+      ipcRenderer.send('update-overlay-data', {
+        transcript,
+        liveAssistantResponse,
+        liveInputText
+      });
+    } catch (e) {
+      // Not in electron
+    }
+  }, [transcript, liveAssistantResponse, liveInputText]);
 
-        // Copy styles
-        [...document.styleSheets].forEach((styleSheet) => {
-          try {
-            const cssRules = [...styleSheet.cssRules].map((rule) => rule.cssText).join('');
-            const style = document.createElement('style');
-            style.textContent = cssRules;
-            pip.document.head.appendChild(style);
-          } catch (e) {
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.type = styleSheet.type;
-            link.media = styleSheet.media;
-            link.href = styleSheet.href!;
-            pip.document.head.appendChild(link);
-          }
-        });
-
-        // Add base styles specifically for the PiP window to ensure glassmorphism works
-        const baseStyle = document.createElement('style');
-        baseStyle.textContent = `
-          html, body { 
-            margin: 0; 
-            padding: 0;
-            height: 100%;
-            background: rgba(15, 23, 42, 0.85);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            color: #cbd5e1; 
-            font-family: ui-sans-serif, system-ui, sans-serif;
-            overflow: hidden;
-          }
-          ::-webkit-scrollbar { width: 4px; }
-          ::-webkit-scrollbar-track { background: transparent; }
-          ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
-          ::-webkit-scrollbar-thumb:hover { background: #64748b; }
-        `;
-        pip.document.head.appendChild(baseStyle);
-
-        pip.addEventListener('pagehide', () => {
-          setPipWindow(null);
-        });
-
-        setPipWindow(pip);
-      } else {
-        alert("Your browser doesn't support the Document Picture-in-Picture API. Please use Chrome or Edge 111+.");
-      }
-    } catch (err) {
-      console.error("Failed to open PiP window:", err);
+  const togglePiP = () => {
+    try {
+      // @ts-ignore
+      const { ipcRenderer } = window.require('electron');
+      ipcRenderer.send('toggle-overlay');
+    } catch (e) {
+      console.error("Overlay not supported outside Electron context");
     }
   };
 
@@ -481,19 +484,16 @@ const App: React.FC = () => {
             }}
             className="flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white hover:bg-white/5 transition-all"
           >
-             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-             </svg>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
             <span>Settings</span>
           </button>
 
           <button
             onClick={togglePiP}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${pipWindow
-              ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-              : 'text-slate-400 hover:text-white hover:bg-white/5'
-              }`}
+            className="flex items-center space-x-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white hover:bg-white/5 transition-all"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" className="hidden" />
@@ -564,18 +564,18 @@ const App: React.FC = () => {
       {showSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
-             <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-6">
               <h3 className="text-sm font-black uppercase tracking-widest text-white">Application Settings</h3>
               <button onClick={() => setShowSettings(false)} className="text-slate-500 hover:text-white transition-colors">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Gemini API Key</label>
-                <input 
-                  type="password" 
+                <input
+                  type="password"
                   value={tempApiKey}
                   onChange={(e) => setTempApiKey(e.target.value)}
                   placeholder="AIzaSy..."
@@ -587,13 +587,13 @@ const App: React.FC = () => {
               </div>
 
               <div className="pt-4 flex justify-end space-x-3">
-                <button 
+                <button
                   onClick={() => setShowSettings(false)}
                   className="px-4 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   onClick={() => {
                     setApiKey(tempApiKey);
                     localStorage.setItem('gemini_api_key', tempApiKey);
@@ -621,13 +621,59 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {pipWindow && createPortal(
-        <TranscriptOverlay
-          transcript={transcript}
-          liveAssistantResponse={liveAssistantResponse}
-          liveInputText={liveInputText}
-        />,
-        pipWindow.document.body
+
+
+      {/* Screen Picker Modal */}
+      {pickerSources.length > 0 && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-8 animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl p-6 w-full max-w-4xl shadow-2xl flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-sm font-black uppercase tracking-widest text-white">Choose what to share</h3>
+              <button
+                onClick={() => {
+                  const { ipcRenderer } = window.require('electron');
+                  ipcRenderer.send('screen-picker-selected', null);
+                  setPickerSources([]);
+                }}
+                className="text-slate-500 hover:text-white transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="overflow-y-auto custom-scrollbar flex-1 grid grid-cols-3 gap-4 p-2">
+              {pickerSources.map((source: any) => (
+                <button
+                  key={source.id}
+                  onClick={() => {
+                    const { ipcRenderer } = window.require('electron');
+                    ipcRenderer.send('screen-picker-selected', source.id);
+                    setPickerSources([]);
+                  }}
+                  className="group flex flex-col space-y-3 p-3 rounded-xl hover:bg-white/5 border border-transparent hover:border-white/10 transition-all text-left"
+                >
+                  <div className="aspect-video bg-black rounded-lg overflow-hidden border border-white/5 relative group-hover:border-indigo-500/50 transition-all">
+                    <img src={source.thumbnail.toDataURL()} alt={source.name} className="w-full h-full object-cover" />
+                  </div>
+                  <span className="text-xs font-medium text-slate-300 group-hover:text-white truncate w-full block">{source.name}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => {
+                  const { ipcRenderer } = window.require('electron');
+                  ipcRenderer.send('screen-picker-selected', null);
+                  setPickerSources([]);
+                }}
+                className="px-4 py-2 rounded-lg text-xs font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

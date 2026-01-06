@@ -1,7 +1,7 @@
-
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import OverlayWrapper from './components/OverlayWrapper';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -11,6 +11,6 @@ if (!rootElement) {
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
-    <App />
+    {new URLSearchParams(window.location.search).get('overlay') ? <OverlayWrapper /> : <App />}
   </React.StrictMode>
 );
