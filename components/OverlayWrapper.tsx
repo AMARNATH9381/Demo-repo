@@ -8,6 +8,7 @@ const OverlayWrapper: React.FC = () => {
     const [liveInputText, setLiveInputText] = useState<string>('');
     const [status, setStatus] = useState<string>('DISCONNECTED');
     const [error, setError] = useState<string | null>(null);
+    const [sessionElapsed, setSessionElapsed] = useState<number>(0);
 
     useEffect(() => {
         let ipcRenderer: any;
@@ -26,6 +27,7 @@ const OverlayWrapper: React.FC = () => {
             if (data.liveInputText !== undefined) setLiveInputText(data.liveInputText);
             if (data.status) setStatus(data.status);
             if (data.error !== undefined) setError(data.error);
+            if (data.sessionElapsed !== undefined) setSessionElapsed(data.sessionElapsed);
         };
 
         ipcRenderer.on('update-overlay-data', handleUpdate);
@@ -57,12 +59,45 @@ const OverlayWrapper: React.FC = () => {
 
                     {/* Centered Title */}
                     <div className="flex items-center space-x-2 opacity-75 hover:opacity-100 transition-opacity">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <div className={`w-1.5 h-1.5 rounded-full ${status === 'CONNECTED' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
                         <span className="text-[10px] font-bold text-slate-200 uppercase tracking-widest">Monitor</span>
                     </div>
 
-                    {/* Close Button - Absolute Right */}
-                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                    {/* Control Buttons - Absolute Right */}
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+                        {/* Start/Restart Session Button */}
+                        {status !== 'CONNECTED' && (
+                            <button
+                                onClick={() => {
+                                    try {
+                                        // @ts-ignore
+                                        const { ipcRenderer } = window.require('electron');
+                                        ipcRenderer.send('overlay-start-session');
+                                    } catch (e) {
+                                        console.error('IPC not available');
+                                    }
+                                }}
+                                className="bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded transition-colors"
+                            >
+                                Start
+                            </button>
+                        )}
+                        {status === 'CONNECTED' && (
+                            <button
+                                onClick={() => {
+                                    try {
+                                        // @ts-ignore
+                                        const { ipcRenderer } = window.require('electron');
+                                        ipcRenderer.send('overlay-stop-session');
+                                    } catch (e) {
+                                        console.error('IPC not available');
+                                    }
+                                }}
+                                className="bg-red-600 hover:bg-red-500 text-white text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded transition-colors"
+                            >
+                                Stop
+                            </button>
+                        )}
                         <button
                             onClick={() => {
                                 window.close();
@@ -80,6 +115,7 @@ const OverlayWrapper: React.FC = () => {
                         liveInputText={liveInputText}
                         status={status}
                         error={error}
+                        sessionElapsed={sessionElapsed}
                     />
                 </div>
             </div>

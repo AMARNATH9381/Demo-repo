@@ -7,6 +7,7 @@ interface TranscriptOverlayProps {
     liveInputText: string;
     status?: string;
     error?: string | null;
+    sessionElapsed?: number; // Session timer in seconds
 }
 
 const TranscriptOverlay: React.FC<TranscriptOverlayProps> = ({
@@ -14,7 +15,8 @@ const TranscriptOverlay: React.FC<TranscriptOverlayProps> = ({
     liveAssistantResponse,
     liveInputText,
     status = 'DISCONNECTED',
-    error = null
+    error = null,
+    sessionElapsed = 0
 }) => {
     const bottomRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -87,7 +89,18 @@ const TranscriptOverlay: React.FC<TranscriptOverlayProps> = ({
                 className="flex-1 overflow-y-auto space-y-8 pr-2 pb-2 custom-scrollbar"
             >
                 {/* Status Indicator */}
-                <div className="sticky top-0 z-10 flex justify-center pointer-events-none">
+                <div className="sticky top-0 z-10 flex justify-center items-center gap-3 pointer-events-none">
+                    {/* Session Timer */}
+                    {status === 'CONNECTED' && sessionElapsed > 0 && (
+                        <div className={`text-[10px] font-bold px-3 py-1 rounded-full shadow-lg flex items-center space-x-2 ${sessionElapsed >= 540 ? 'bg-red-500/90 text-white border border-red-400/50' :
+                                sessionElapsed >= 480 ? 'bg-amber-500/90 text-black border border-amber-400/50' :
+                                    'bg-slate-700/90 text-slate-200 border border-slate-600/50'
+                            }`}>
+                            <span>⏱</span>
+                            <span>{Math.floor(sessionElapsed / 60).toString().padStart(2, '0')}:{(sessionElapsed % 60).toString().padStart(2, '0')}</span>
+                            {sessionElapsed >= 480 && <span>⚠️</span>}
+                        </div>
+                    )}
                     {error ? (
                         <div className="bg-red-500/90 text-white text-[10px] font-bold px-3 py-1 rounded-full shadow-lg border border-red-400/50 flex items-center space-x-2">
                             <span>⚠ {error}</span>

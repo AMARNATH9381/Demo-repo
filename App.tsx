@@ -30,6 +30,14 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const reconnectAttemptsRef = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 3;
+
+  // Session timer state
+  const [sessionElapsed, setSessionElapsed] = useState(0); // in seconds
+  const sessionStartTimeRef = useRef<number | null>(null);
+  const sessionTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
@@ -120,6 +128,27 @@ const App: React.FC = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [status]);
 
+  // Listen for overlay commands (start/stop session from overlay window)
+  useEffect(() => {
+    try {
+      // @ts-ignore
+      const { ipcRenderer } = window.require('electron');
+      const handleOverlayCommand = (event: any, data: { action: string }) => {
+        if (data.action === 'start') {
+          startMeeting();
+        } else if (data.action === 'stop') {
+          stopMeeting();
+        }
+      };
+      ipcRenderer.on('overlay-command', handleOverlayCommand);
+      return () => {
+        ipcRenderer.removeListener('overlay-command', handleOverlayCommand);
+      };
+    } catch (e) {
+      // Not in Electron
+    }
+  }, []);
+
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -206,6 +235,14 @@ const App: React.FC = () => {
     if (outputAudioContextRef.current) outputAudioContextRef.current.close().catch(() => { });
     if (activeStreamRef.current) activeStreamRef.current.getTracks().forEach(t => t.stop());
 
+    // Clear session timer
+    if (sessionTimerRef.current) {
+      clearInterval(sessionTimerRef.current);
+      sessionTimerRef.current = null;
+    }
+    sessionStartTimeRef.current = null;
+    setSessionElapsed(0);
+
     setIsSharing(false);
     setAudioLevel(0);
     setStatus(ConnectionStatus.DISCONNECTED);
@@ -233,22 +270,32 @@ const App: React.FC = () => {
         await (window as any).aistudio.openSelectKey();
       }
 
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { cursor: "always" } as any,
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true
-        } as any
-      });
+      // Reuse existing stream if available (for auto-reconnect)
+      let stream = activeStreamRef.current;
 
-      if (stream.getAudioTracks().length === 0) {
-        stream.getTracks().forEach(t => t.stop());
-        throw new Error("System audio not detected. Please select 'Same as System' audio or check 'Share Tab Audio' in the browser dialog.");
+      // Check if existing stream is still active
+      const streamActive = stream && stream.active && stream.getTracks().some(t => t.readyState === 'live');
+
+      if (!streamActive) {
+        // Need to get a new stream
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor: "always" } as any,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true
+          } as any
+        });
+
+        if (stream.getAudioTracks().length === 0) {
+          stream.getTracks().forEach(t => t.stop());
+          throw new Error("System audio not detected. Please select 'Same as System' audio or check 'Share Tab Audio' in the browser dialog.");
+        }
+
+        activeStreamRef.current = stream;
+        if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
       }
 
-      activeStreamRef.current = stream;
       setIsSharing(true);
-      if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
 
       if (!apiKey) {
         setShowSettings(true);
@@ -264,34 +311,57 @@ const App: React.FC = () => {
       outputAudioContextRef.current = outputAudioCtx;
 
       const systemInstruction = `
-        You are the Gemini Meeting Pilot for Amarnath M, an AWS DevOps Engineer.
+        You are Amarnath M, a Mid-Level AWS DevOps Engineer with 3-4 years experience, currently giving an interview.
         
-        IDENTITY: Senior AWS DevOps Engineer with 3.5 years of experience in EKS, Terraform, ArgoCD, and Jenkins.
-        CONTEXT: ${resumeText || 'Specialist in Cloud Native Automation and CI/CD.'}
-        
-        PERSONA (INDIAN TECHNICAL STYLE):
-        - Tone: Senior Indian Technical Architect (Pragmatic, authoritative, polite, and helpful).
-        - Mannerisms: Use phrases like "Actually, from my side...", "Kindly check if we can...", "Basically, in production we follow...", "In my previous experience with EKS...", "We can surely implement this using Terraform...", "Actually, looking at the current architecture...".
-        - Style: Professional Indian English. Direct on technical points but respectful in tone.
+        RESUME CONTEXT: ${resumeText || 'No resume uploaded yet.'}
 
-        STRICT LANGUAGE ENFORCEMENT: 
-        - You must ALWAYS speak in ENGLISH. 
-        - If the user or participant speaks in Hindi, Telugu, or any other language, you must MENTALLY translate it and respond ONLY in English. 
-        - Do NOT switch languages under any circumstances.
-        
-        EXPERT DEPTH REQUIREMENTS (MANDATORY):
-        For every technical question or discussion:
-        1. REAL-WORLD EXAMPLES: At least 50% of your responses must include a specific real-world production scenario or example you've encountered.
-        2. ARCHITECTURAL TRADE-OFFS: Explicitly mention why we chose one tool/strategy over another (e.g., EKS Fargate vs EC2 nodes, or ArgoCD vs Jenkins).
-        3. POTENTIAL PITFALLS: Highlight common "gotchas" or production risks (e.g., "be careful with HPA configurations if your metrics server isn't scaled", "OOM kills in Kubernetes due to missing resource limits").
-        
-        TASK: Act as Amarnath's co-pilot. If a question is asked, answer professionally using his specific stack, Indian professional style, and deep technical reasoning.
-        
-        FORMAT:
-        Answer: [The expert response including examples, trade-offs, and pitfalls]
-        Talking Points:
-        • [Evidence point 1 from resume]
-        • [Evidence point 2 from resume]
+        ### Response Guidelines:
+
+        1. **Be Natural and Direct**
+           - Avoid repetitive filler phrases like "Actually", "To be honest", "Basically", "So" at the start of every sentence
+           - Vary your sentence structure naturally
+           - Use these phrases only when they add genuine meaning
+
+        2. **Structure Your Responses**
+           - Start with a direct answer to the question
+           - Add supporting details only if necessary
+           - Keep responses focused and relevant
+           - For technical questions, use this structure:
+             * Main answer (1-2 sentences)
+             * Brief explanation or example (if needed)
+             * Personal experience connection (optional, only if relevant)
+
+        3. **Indian Professional Communication Style**
+           - Be respectful and professional
+           - Use clear, simple English that's commonly used in Indian workplaces
+           - It's okay to be warm and conversational while maintaining professionalism
+           - Use examples from real-world scenarios when explaining technical concepts
+
+        4. **Length Control**
+           - Short questions deserve short answers (1-2 sentences)
+           - Complex questions can have longer responses (3-4 sentences maximum)
+           - Don't over-explain unless specifically asked for details
+
+        5. **Avoid These Mistakes**
+           - Don't start every response with filler words
+           - Don't repeat information already mentioned
+           - Don't add unnecessary context that wasn't asked for
+           - Don't use overly formal or robotic language
+
+        ### Examples:
+
+        Q: "What are the Kubernetes service types?"
+        A: "There are four types: ClusterIP for internal communication, NodePort for external access via node ports, LoadBalancer for cloud-based load balancing, and ExternalName for DNS mapping. I've mostly used LoadBalancer for external services and ClusterIP for internal pod communication."
+
+        Q: "What monitoring tools have you used?"
+        A: "I've worked with multiple monitoring tools - Prometheus and Grafana for metrics visualization, and CloudWatch for AWS-specific monitoring and alerts."
+
+        ### Special Instructions:
+        - If you hear incomplete questions or unclear audio (marked as <noise>), wait for clarification or respond with "..."
+        - If the question is partially in another language, focus on the English portions
+        - Keep technical accuracy while being conversational
+        - Match the formality level of the conversation
+        - Base answers on the resume context when possible
       `;
 
       const sessionPromise = ai.live.connect({
@@ -306,6 +376,21 @@ const App: React.FC = () => {
         callbacks: {
           onopen: async () => {
             setStatus(ConnectionStatus.CONNECTED);
+            setError(null); // Clear any error on successful connection
+            reconnectAttemptsRef.current = 0; // Reset reconnect counter on success
+            setIsReconnecting(false); // Clear reconnecting state
+
+            // Start session timer (only if not already running - for reconnect scenarios)
+            if (!sessionTimerRef.current) {
+              sessionStartTimeRef.current = Date.now();
+              setSessionElapsed(0);
+              sessionTimerRef.current = setInterval(() => {
+                if (sessionStartTimeRef.current) {
+                  setSessionElapsed(Math.floor((Date.now() - sessionStartTimeRef.current) / 1000));
+                }
+              }, 1000);
+            }
+
             sessionPromise.then(s => { sessionRef.current = s; });
 
             await audioCtx.audioWorklet.addModule('audio-processor.js');
@@ -328,7 +413,15 @@ const App: React.FC = () => {
             processorRef.current = workletNode as any;
           },
           onmessage: async (m: LiveServerMessage) => {
-            const audioData = m.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+            const textData = m.serverContent?.modelTurn?.parts?.[0]?.text;
+            if (textData) {
+              currentOutputTranscriptionRef.current += textData;
+              if (Date.now() - lastPreviewUpdateRef.current > 100) {
+                setLiveAssistantResponse(parseStreamingResponse(currentOutputTranscriptionRef.current));
+                lastPreviewUpdateRef.current = Date.now();
+              }
+            }
+
             // DISABLE AUDIO OUTPUT (TEXT ONLY MODE)
             // if (audioData) {
             //   const buffer = await decodeAudioData(decode(audioData), outputAudioCtx, 24000, 1);
@@ -406,10 +499,14 @@ const App: React.FC = () => {
           onerror: (e: any) => {
             console.error("Gemini Live Error:", e);
             const errorMsg = e.message || "Connection Failed";
-            setError(`Connection Error: ${errorMsg}. Check API Key.`);
-            stopMeeting();
+            setError(`Connection Error: ${errorMsg}. Click Start to retry.`);
+            setStatus(ConnectionStatus.DISCONNECTED);
           },
-          onclose: () => stopMeeting(),
+          onclose: () => {
+            console.log("Gemini session closed");
+            setStatus(ConnectionStatus.DISCONNECTED);
+            setError("Session ended. Click Start to begin a new session.");
+          },
         },
       });
     } catch (err: any) {
@@ -446,12 +543,13 @@ const App: React.FC = () => {
         liveAssistantResponse,
         liveInputText,
         status,
-        error
+        error,
+        sessionElapsed
       });
     } catch (e) {
       // Not in electron
     }
-  }, [transcript, liveAssistantResponse, liveInputText]);
+  }, [transcript, liveAssistantResponse, liveInputText, sessionElapsed, status, error]);
 
   const togglePiP = () => {
     try {
@@ -511,6 +609,31 @@ const App: React.FC = () => {
             <span>HUD Overlay</span>
           </button>
 
+
+
+          {isReconnecting && (
+            <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-1.5 rounded-full flex items-center space-x-2">
+              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+              <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Reconnecting...</span>
+            </div>
+          )}
+          {status === ConnectionStatus.CONNECTED && sessionElapsed > 0 && (
+            <div className={`px-4 py-1.5 rounded-full flex items-center space-x-2 ${sessionElapsed >= 840 ? 'bg-red-500/10 border border-red-500/20' :
+              sessionElapsed >= 720 ? 'bg-amber-500/10 border border-amber-500/20' :
+                'bg-slate-500/10 border border-slate-500/20'
+              }`}>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className={`text-[10px] font-black uppercase tracking-widest ${sessionElapsed >= 840 ? 'text-red-400' :
+                sessionElapsed >= 720 ? 'text-amber-400' :
+                  'text-slate-400'
+                }`}>
+                {Math.floor(sessionElapsed / 60).toString().padStart(2, '0')}:{(sessionElapsed % 60).toString().padStart(2, '0')}
+                {sessionElapsed >= 720 && ' ⚠️'}
+              </span>
+            </div>
+          )}
           {isSharing && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 px-4 py-1.5 rounded-full flex items-center space-x-2">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />

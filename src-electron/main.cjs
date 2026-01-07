@@ -73,7 +73,7 @@ app.on('ready', () => {
 
     // Enable screen sharing with UI picker
     session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
-        desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 150, height: 150 } }).then((sources) => {
+        desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 150, height: 150 } }).then((sources) => {
             // Send sources to the renderer to show a UI
             mainWindow.webContents.send('show-screen-picker', sources);
 
@@ -151,6 +151,19 @@ app.on('ready', () => {
 
     ipcMain.on('overlay-ready', () => {
         // Could request initial state here if needed
+    });
+
+    // Forward overlay commands to main window
+    ipcMain.on('overlay-start-session', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('overlay-command', { action: 'start' });
+        }
+    });
+
+    ipcMain.on('overlay-stop-session', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('overlay-command', { action: 'stop' });
+        }
     });
 
     // Tray Implementation
