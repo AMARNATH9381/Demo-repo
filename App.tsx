@@ -128,26 +128,7 @@ const App: React.FC = () => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [status]);
 
-  // Listen for overlay commands (start/stop session from overlay window)
-  useEffect(() => {
-    try {
-      // @ts-ignore
-      const { ipcRenderer } = window.require('electron');
-      const handleOverlayCommand = (event: any, data: { action: string }) => {
-        if (data.action === 'start') {
-          startMeeting();
-        } else if (data.action === 'stop') {
-          stopMeeting();
-        }
-      };
-      ipcRenderer.on('overlay-command', handleOverlayCommand);
-      return () => {
-        ipcRenderer.removeListener('overlay-command', handleOverlayCommand);
-      };
-    } catch (e) {
-      // Not in Electron
-    }
-  }, []);
+
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -261,7 +242,7 @@ const App: React.FC = () => {
     return { text, talkingPoints };
   };
 
-  const startMeeting = async () => {
+  const startMeeting = useCallback(async () => {
     try {
       setStatus(ConnectionStatus.CONNECTING);
       setError(null);
@@ -513,7 +494,28 @@ const App: React.FC = () => {
       setError(err.message || "Failed to initialize meeting session.");
       stopMeeting();
     }
-  };
+  }, [apiKey, resumeText, stopMeeting]);
+
+  // Listen for overlay commands (start/stop session from overlay window)
+  useEffect(() => {
+    try {
+      // @ts-ignore
+      const { ipcRenderer } = window.require('electron');
+      const handleOverlayCommand = (event: any, data: { action: string }) => {
+        if (data.action === 'start') {
+          startMeeting();
+        } else if (data.action === 'stop') {
+          stopMeeting();
+        }
+      };
+      ipcRenderer.on('overlay-command', handleOverlayCommand);
+      return () => {
+        ipcRenderer.removeListener('overlay-command', handleOverlayCommand);
+      };
+    } catch (e) {
+      // Not in Electron
+    }
+  }, [startMeeting, stopMeeting]);
 
   const deleteSession = async (id: string) => {
     try {

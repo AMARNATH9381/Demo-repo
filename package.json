@@ -28,7 +28,7 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
+      "src-electron/**/*",
       "backend/**/*",
       "package.json"
     ],
