@@ -564,7 +564,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 font-sans flex flex-col">
+    <div className="h-screen overflow-hidden bg-[#020617] text-slate-100 font-sans flex flex-col">
       <nav className="h-16 border-b border-white/5 bg-[#020617]/80 backdrop-blur-xl flex-none z-40 flex items-center justify-between px-8">
         <div className="flex items-center space-x-2">
           <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full shadow-[0_0_10px_rgba(79,70,229,0.5)]" />
