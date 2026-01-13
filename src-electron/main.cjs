@@ -1,6 +1,6 @@
 const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, desktopCapturer, session, globalShortcut } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { fork } = require('child_process');
 
 console.log('Starting Electron Main Process...');
 
@@ -17,10 +17,20 @@ function startBackend() {
     const backendPath = path.join(__dirname, '../backend/server.js');
     console.log('Starting backend from:', backendPath);
 
-    // Spawn backend. Use 'node' command.
-    backendProcess = spawn('node', [backendPath], {
+    // Use fork instead of spawn. 
+    // fork uses the same executable (Electron) to run the script, ensuring
+    // native modules like sqlite3 are compatible and no external 'node' is needed.
+    backendProcess = fork(backendPath, [], {
         env: { ...process.env, PORT: 3001, DB_PATH: process.env.DB_PATH },
-        stdio: 'inherit'
+        stdio: ['inherit', 'inherit', 'inherit', 'ipc']
+    });
+
+    backendProcess.on('error', (err) => {
+        console.error('Backend process failed to start:', err);
+    });
+
+    backendProcess.on('exit', (code, signal) => {
+        console.log(`Backend process exited with code ${code} and signal ${signal}`);
     });
 }
 
