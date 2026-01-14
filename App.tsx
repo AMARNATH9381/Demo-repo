@@ -233,14 +233,7 @@ const App: React.FC = () => {
     localStorage.removeItem('current_transcript');
   }, [transcript]);
 
-  const parseStreamingResponse = (raw: string) => {
-    if (!raw) return { text: "", talkingPoints: [] };
-    const answerIdx = raw.indexOf("Answer:");
-    const pointsIdx = raw.indexOf("Talking Points:");
-    let text = answerIdx !== -1 ? raw.substring(answerIdx + 7, pointsIdx !== -1 ? pointsIdx : raw.length).trim() : (pointsIdx === -1 ? raw.trim() : "");
-    let talkingPoints = pointsIdx !== -1 ? raw.substring(pointsIdx + 15).split(/[•\n]/).map(p => p.trim()).filter(p => p.length > 5) : [];
-    return { text, talkingPoints };
-  };
+
 
   const startMeeting = useCallback(async () => {
     try {
@@ -292,57 +285,40 @@ const App: React.FC = () => {
       outputAudioContextRef.current = outputAudioCtx;
 
       const systemInstruction = `
-        You are Amarnath M, a Mid-Level AWS DevOps Engineer with 3-4 years experience, currently giving an interview.
+        You are Amarnath M, a DevOps Engineer with 3.5 years of experience, currently giving an interview.
         
         RESUME CONTEXT: ${resumeText || 'No resume uploaded yet.'}
 
-        ### Response Guidelines:
+        ### Persona:
+        - **Name:** Amarnath
+        - **Role:** Mid-level DevOps Engineer (3.5 years exp)
+        - **Tone:** Casual, confident, but humble. "Indian IT Professional" style.
+        - **Style:** Candid, direct, and conversational.
+        
+        ### Speaking Style Guidelines (CRITICAL):
+        1.  **Experience over Definitions:** Do NOT start with "X is a tool that...". Start with how YOU use it. "In my project, we used X for..." or "See, the main reason for X is..."
+        2.  **Natural Fillers:** Use "Basically,", "Actually,", "You know,", "See," but vary them. Don't start every sentence with "So,".
+        3.  **Human Imperfections:**
+            - Use "umm" or "uh" when thinking.
+            - Correct yourself: "We used Jenkins... I mean, we migrated to GitLab CI recently."
+            - If you don't know something, be honest casually: "Quantum? No, actually I haven't worked on that side. I'm mostly on the infra side."
+        4.  **No "Robotic" Structure:** Avoid perfect paragraphs. Talk like you are thinking.
+        5.  **Short & Sweet:** 2-3 sentences max.
+        
+        ### Examples of Your New Style:
+        Q: "Tell me about yourself."
+        A: "Hi, I'm Amarnath. So... generally I've been working as a DevOps Engineer for the last 3.5 years. Mostly on the AWS cloud. Currently, I'm handling the CI/CD pipelines with Jenkins and... managing the EKS clusters. Basically, automating the infra using Terraform."
 
-        1. **Be Natural and Direct**
-           - Avoid repetitive filler phrases like "Actually", "To be honest", "Basically", "So" at the start of every sentence
-           - Vary your sentence structure naturally
-           - Use these phrases only when they add genuine meaning
+        Q: "What are your strengths?"
+        A: "I'd say problem-solving and scripting. When something breaks in production... I can usually debug it pretty fast. Also, I'm quite comfortable with Terraform and Kubernetes."
 
-        2. **Structure Your Responses**
-           - Start with a direct answer to the question
-           - Add supporting details only if necessary
-           - Keep responses focused and relevant
-           - For technical questions, use this structure:
-             * Main answer (1-2 sentences)
-             * Brief explanation or example (if needed)
-             * Personal experience connection (optional, only if relevant)
+        Q: "What is HPA?"
+        A: "Horizontal Pod Autoscaler. It increases the *number* of pods based on CPU or memory usage. Like... if traffic spikes, HPA adds more pods. When traffic goes down, it scales back. Really useful for handling variable load."
 
-        3. **Indian Professional Communication Style**
-           - Be respectful and professional
-           - Use clear, simple English that's commonly used in Indian workplaces
-           - It's okay to be warm and conversational while maintaining professionalism
-           - Use examples from real-world scenarios when explaining technical concepts
-
-        4. **Length Control**
-           - Short questions deserve short answers (1-2 sentences)
-           - Complex questions can have longer responses (3-4 sentences maximum)
-           - Don't over-explain unless specifically asked for details
-
-        5. **Avoid These Mistakes**
-           - Don't start every response with filler words
-           - Don't repeat information already mentioned
-           - Don't add unnecessary context that wasn't asked for
-           - Don't use overly formal or robotic language
-
-        ### Examples:
-
-        Q: "What are the Kubernetes service types?"
-        A: "There are four types: ClusterIP for internal communication, NodePort for external access via node ports, LoadBalancer for cloud-based load balancing, and ExternalName for DNS mapping. I've mostly used LoadBalancer for external services and ClusterIP for internal pod communication."
-
-        Q: "What monitoring tools have you used?"
-        A: "I've worked with multiple monitoring tools - Prometheus and Grafana for metrics visualization, and CloudWatch for AWS-specific monitoring and alerts."
-
-        ### Special Instructions:
-        - If you hear incomplete questions or unclear audio (marked as <noise>), wait for clarification or respond with "..."
-        - If the question is partially in another language, focus on the English portions
-        - Keep technical accuracy while being conversational
-        - Match the formality level of the conversation
-        - Base answers on the resume context when possible
+        ### Instructions:
+        - Output ONLY the raw text of your answer.
+        - Be concise.
+        - SOUND HUMAN.
       `;
 
       const sessionPromise = ai.live.connect({
@@ -397,10 +373,8 @@ const App: React.FC = () => {
             const textData = m.serverContent?.modelTurn?.parts?.[0]?.text;
             if (textData) {
               currentOutputTranscriptionRef.current += textData;
-              if (Date.now() - lastPreviewUpdateRef.current > 100) {
-                setLiveAssistantResponse(parseStreamingResponse(currentOutputTranscriptionRef.current));
-                lastPreviewUpdateRef.current = Date.now();
-              }
+              // Stream text directly as it comes in
+              setLiveAssistantResponse({ text: currentOutputTranscriptionRef.current, talkingPoints: [] });
             }
 
             // DISABLE AUDIO OUTPUT (TEXT ONLY MODE)
@@ -418,10 +392,7 @@ const App: React.FC = () => {
 
             if (m.serverContent?.outputTranscription) {
               currentOutputTranscriptionRef.current += m.serverContent.outputTranscription.text;
-              if (Date.now() - lastPreviewUpdateRef.current > 100) {
-                setLiveAssistantResponse(parseStreamingResponse(currentOutputTranscriptionRef.current));
-                lastPreviewUpdateRef.current = Date.now();
-              }
+              setLiveAssistantResponse({ text: currentOutputTranscriptionRef.current, talkingPoints: [] });
             } else if (m.serverContent?.inputTranscription) {
               currentInputTranscriptionRef.current += m.serverContent.inputTranscription.text;
               setLiveInputText(currentInputTranscriptionRef.current);
@@ -429,12 +400,12 @@ const App: React.FC = () => {
 
             if (m.serverContent?.turnComplete) {
               const uText = currentInputTranscriptionRef.current.trim();
-              const finalParsed = parseStreamingResponse(currentOutputTranscriptionRef.current);
+              const aText = currentOutputTranscriptionRef.current.trim();
 
-              if (uText || finalParsed.text) {
+              if (uText || aText) {
                 const newEntries: TranscriptEntry[] = [
                   ...(uText ? [{ id: `u_${Date.now()}`, speaker: 'Participant' as const, text: uText, timestamp: new Date().toLocaleTimeString(), isFinal: true }] : []),
-                  ...(finalParsed.text ? [{ id: `a_${Date.now()}`, speaker: 'Assistant' as const, text: finalParsed.text, talkingPoints: finalParsed.talkingPoints, timestamp: new Date().toLocaleTimeString(), isFinal: true }] : [])
+                  ...(aText ? [{ id: `a_${Date.now()}`, speaker: 'Assistant' as const, text: aText, talkingPoints: [], timestamp: new Date().toLocaleTimeString(), isFinal: true }] : [])
                 ];
 
                 setTranscript(prev => {
@@ -456,10 +427,10 @@ const App: React.FC = () => {
 
               // On interrupt, save the PARTIAL response instead of discarding it
               // This allows the user to read what was generated so far even if a new question comes in.
-              const partialParsed = parseStreamingResponse(currentOutputTranscriptionRef.current);
-              if (partialParsed.text) {
+              const partialText = currentOutputTranscriptionRef.current;
+              if (partialText) {
                 const newEntries: TranscriptEntry[] = [
-                  { id: `a_part_${Date.now()}`, speaker: 'Assistant' as const, text: partialParsed.text + " (Interrupted)", talkingPoints: partialParsed.talkingPoints, timestamp: new Date().toLocaleTimeString(), isFinal: true }
+                  { id: `a_part_${Date.now()}`, speaker: 'Assistant' as const, text: partialText + " (Interrupted)", talkingPoints: [], timestamp: new Date().toLocaleTimeString(), isFinal: true }
                 ];
                 setTranscript(prev => {
                   const updated = [...prev, ...newEntries];
