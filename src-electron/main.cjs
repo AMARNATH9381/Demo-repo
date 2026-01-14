@@ -81,7 +81,23 @@ app.on('ready', () => {
     startBackend();
     createWindow();
 
-    // Enable screen sharing with UI picker
+    // Enable screen sharing with AUTO-SELECT (No UI Picker)
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+        desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } }).then((sources) => {
+            if (sources.length > 0) {
+                // Automatically select the first screen (usually "Entire Screen" or "Screen 1")
+                callback({ video: sources[0], audio: 'loopback' });
+            } else {
+                // No sources found
+                callback(null);
+            }
+        }).catch(err => {
+            console.error("Error getting sources:", err);
+            callback(null);
+        });
+    });
+
+    /* COMMENTED OUT MANUAL PICKER FOR AUTO-SELECTION
     session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
         desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 150, height: 150 } }).then((sources) => {
             // Send sources to the renderer to show a UI
@@ -99,6 +115,7 @@ app.on('ready', () => {
             });
         });
     });
+    */
 
     // Overlay Window Logic
     let overlayWindow = null;

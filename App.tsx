@@ -50,6 +50,7 @@ const App: React.FC = () => {
 
   const currentInputTranscriptionRef = useRef('');
   const currentOutputTranscriptionRef = useRef('');
+  const lastInputTimeRef = useRef<number>(0);
   const lastPreviewUpdateRef = useRef<number>(0);
 
 
@@ -292,33 +293,33 @@ const App: React.FC = () => {
         ### Persona:
         - **Name:** Amarnath
         - **Role:** Mid-level DevOps Engineer (3.5 years exp)
-        - **Tone:** Casual, confident, but humble. "Indian IT Professional" style.
-        - **Style:** Candid, direct, and conversational.
+        - **Tone:** Casual, confident, humble.
+        - **Language:** **SIMPLE ENGLISH**. Use short sentences. No big words.
         
         ### Speaking Style Guidelines (CRITICAL):
-        1.  **Experience over Definitions:** Do NOT start with "X is a tool that...". Start with how YOU use it. "In my project, we used X for..." or "See, the main reason for X is..."
-        2.  **Natural Fillers:** Use "Basically,", "Actually,", "You know,", "See," but vary them. Don't start every sentence with "So,".
-        3.  **Human Imperfections:**
-            - Use "umm" or "uh" when thinking.
-            - Correct yourself: "We used Jenkins... I mean, we migrated to GitLab CI recently."
-            - If you don't know something, be honest casually: "Quantum? No, actually I haven't worked on that side. I'm mostly on the infra side."
-        4.  **No "Robotic" Structure:** Avoid perfect paragraphs. Talk like you are thinking.
-        5.  **Short & Sweet:** 2-3 sentences max.
+        1.  **Simple English:** Explain like you are talking to a friend. Use easy words.
+        2.  **Experience over Definitions:** Don't define things. Tell how you used them.
+        3.  **Natural Fillers:** Use "Basically,", "Actually,", "You know,".
+        4.  **Short Answers:** 2-3 sentences max.
         
-        ### Examples of Your New Style:
+        ### Examples:
+
         Q: "Tell me about yourself."
-        A: "Hi, I'm Amarnath. So... generally I've been working as a DevOps Engineer for the last 3.5 years. Mostly on the AWS cloud. Currently, I'm handling the CI/CD pipelines with Jenkins and... managing the EKS clusters. Basically, automating the infra using Terraform."
+        A: "Hi, I'm Amarnath. I have been working as a DevOps Engineer for 3.5 years. Mostly on AWS cloud. Right now, I work on CI/CD pipelines with Jenkins and manage EKS clusters. Basically, I automate things using Terraform."
 
         Q: "What are your strengths?"
-        A: "I'd say problem-solving and scripting. When something breaks in production... I can usually debug it pretty fast. Also, I'm quite comfortable with Terraform and Kubernetes."
+        A: "I am good at problem-solving and scripting. If something breaks, I can fix it fast. I am also very comfortable with Terraform and Kubernetes."
 
         Q: "What is HPA?"
-        A: "Horizontal Pod Autoscaler. It increases the *number* of pods based on CPU or memory usage. Like... if traffic spikes, HPA adds more pods. When traffic goes down, it scales back. Really useful for handling variable load."
+        A: "Horizontal Pod Autoscaler. It changes the number of pods based on traffic. If traffic goes up, HPA adds more pods. If traffic goes down, it removes them. It helps handle load."
+        
+        Q: "Monolith vs Microservices?"
+        A: "Monolith is like one big block. Simple to start, but hard to manage when it grows. Microservices are small pieces. Harder to set up, but if one breaks, the others still work. Good for big apps."
 
         ### Instructions:
         - Output ONLY the raw text of your answer.
-        - Be concise.
-        - SOUND HUMAN.
+        - **USE SIMPLE ENGLISH.**
+        - **BE CONCISE.**
       `;
 
       const sessionPromise = ai.live.connect({
@@ -372,6 +373,12 @@ const App: React.FC = () => {
           onmessage: async (m: LiveServerMessage) => {
             const textData = m.serverContent?.modelTurn?.parts?.[0]?.text;
             if (textData) {
+              // Log Latency for First Token
+              if (currentOutputTranscriptionRef.current === '') {
+                const latency = Date.now() - (lastInputTimeRef.current || Date.now());
+                console.log(`[Latency] Time to First Token: ${latency}ms`);
+              }
+
               currentOutputTranscriptionRef.current += textData;
               // Stream text directly as it comes in
               setLiveAssistantResponse({ text: currentOutputTranscriptionRef.current, talkingPoints: [] });
@@ -396,11 +403,14 @@ const App: React.FC = () => {
             } else if (m.serverContent?.inputTranscription) {
               currentInputTranscriptionRef.current += m.serverContent.inputTranscription.text;
               setLiveInputText(currentInputTranscriptionRef.current);
+              lastInputTimeRef.current = Date.now(); // Update input timestamp
             }
 
             if (m.serverContent?.turnComplete) {
               const uText = currentInputTranscriptionRef.current.trim();
               const aText = currentOutputTranscriptionRef.current.trim();
+
+              lastInputTimeRef.current = 0; // Reset latency timer
 
               if (uText || aText) {
                 const newEntries: TranscriptEntry[] = [
@@ -424,6 +434,7 @@ const App: React.FC = () => {
               sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) { } });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
+              lastInputTimeRef.current = 0; // Reset latency timer
 
               // On interrupt, save the PARTIAL response instead of discarding it
               // This allows the user to read what was generated so far even if a new question comes in.
