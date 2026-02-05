@@ -1,0 +1,8 @@
+{
+  "name": "Gemini Meeting Pilot",
+  "description": "A real-time AI meeting assistant that listens to system audio, transcribes speech, detects questions, and provides personalized answers based on your resume.",
+  "requestFramePermissions": [
+    "display-capture",
+    "microphone"
+  ]
+}

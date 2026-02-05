@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Capture Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        button {
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #4f46e5;
+        }
+        button:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+        .meter {
+            height: 40px;
+            background: #0f172a;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 20px 0;
+            position: relative;
+        }
+        .meter-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #34d399);
+            width: 0%;
+            transition: width 0.1s;
+        }
+        .meter-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-weight: 600;
+            font-size: 14px;
+            text-shadow: 0 0 4px rgba(0,0,0,0.5);
+        }
+        .log {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 16px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin: 4px 0;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .log-info { background: #1e3a5f; color: #60a5fa; }
+        .log-success { background: #1e4d3a; color: #34d399; }
+        .log-error { background: #4d1e1e; color: #f87171; }
+        .log-warn { background: #4d3a1e; color: #fbbf24; }
+        video {
+            width: 100%;
+            border-radius: 8px;
+            background: #000;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .status-idle { background: #475569; color: #cbd5e1; }
+        .status-active { background: #10b981; color: #fff; }
+        .status-error { background: #ef4444; color: #fff; }
+    </style>
+</head>
+<body>
+    <h1>🎤 Audio Capture Test Tool</h1>
+    <p>Use this tool to verify system audio capture is working before using Meeting Pilot.</p>
+
+    <div class="card">
+        <h2>Status: <span id="status" class="status status-idle">Idle</span></h2>
+        <button id="startBtn" onclick="startCapture()">Start Audio Capture</button>
+        <button id="stopBtn" onclick="stopCapture()" disabled>Stop Capture</button>
+        
+        <div class="meter">
+            <div id="meterFill" class="meter-fill"></div>
+            <div class="meter-label" id="meterLabel">0.0%</div>
+        </div>
+
+        <div id="audioInfo" style="display: none; margin-top: 20px;">
+            <h3>Audio Track Info:</h3>
+            <div id="trackInfo" style="font-family: monospace; font-size: 12px;"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Video Preview</h2>
+        <video id="preview" autoplay muted playsinline></video>
+    </div>
+
+    <div class="card">
+        <h2>Console Log</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let stream = null;
+        let audioContext = null;
+        let analyser = null;
+        let animationId = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+
+        async function startCapture() {
+            try {
+                log('Requesting display media with audio...', 'info');
+                
+                stream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { cursor: "always" },
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                        sampleRate: 48000
+                    }
+                });
+
+                log('✓ Stream obtained', 'success');
+
+                // Check audio tracks
+                const audioTracks = stream.getAudioTracks();
+                if (audioTracks.length === 0) {
+                    log('✗ No audio tracks found!', 'error');
+                    log('Make sure to check "Share tab audio" or "Share system audio"', 'warn');
+                    stopCapture();
+                    return;
+                }
+
+                log(`✓ Found ${audioTracks.length} audio track(s)`, 'success');
+
+                // Display track info
+                const track = audioTracks[0];
+                const settings = track.getSettings();
+                const trackInfo = document.getElementById('trackInfo');
+                trackInfo.innerHTML = `
+                    <strong>Label:</strong> ${track.label}<br>
+                    <strong>Enabled:</strong> ${track.enabled}<br>
+                    <strong>Muted:</strong> ${track.muted}<br>
+                    <strong>Sample Rate:</strong> ${settings.sampleRate} Hz<br>
+                    <strong>Channel Count:</strong> ${settings.channelCount}<br>
+                    <strong>State:</strong> ${track.readyState}
+                `;
+                document.getElementById('audioInfo').style.display = 'block';
+
+                log(`Track settings: ${JSON.stringify(settings)}`, 'info');
+
+                // Set up video preview
+                document.getElementById('preview').srcObject = stream;
+
+                // Set up audio analysis
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                source.connect(analyser);
+
+                log('✓ Audio context created and connected', 'success');
+
+                // Start monitoring
+                monitorAudio();
+
+                // Update UI
+                document.getElementById('status').className = 'status status-active';
+                document.getElementById('status').textContent = 'Active';
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+                log('✓ Audio capture started successfully!', 'success');
+                log('Play some audio to see the meter move...', 'info');
+
+            } catch (error) {
+                log(`✗ Error: ${error.message}`, 'error');
+                document.getElementById('status').className = 'status status-error';
+                document.getElementById('status').textContent = 'Error';
+            }
+        }
+
+        function monitorAudio() {
+            const dataArray = new Uint8Array(analyser.frequencyBinCount);
+            
+            function update() {
+                analyser.getByteTimeDomainData(dataArray);
+                
+                // Calculate audio level
+                let max = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const normalized = (dataArray[i] - 128) / 128;
+                    if (Math.abs(normalized) > max) {
+                        max = Math.abs(normalized);
+                    }
+                }
+
+                // Update meter
+                const percentage = max * 100;
+                document.getElementById('meterFill').style.width = `${percentage}%`;
+                document.getElementById('meterLabel').textContent = `${percentage.toFixed(1)}%`;
+
+                // Log if audio detected
+                if (max > 0.01) {
+                    log(`Audio detected: ${percentage.toFixed(2)}%`, 'success');
+                }
+
+                animationId = requestAnimationFrame(update);
+            }
+
+            update();
+        }
+
+        function stopCapture() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+
+            document.getElementById('preview').srcObject = null;
+            document.getElementById('meterFill').style.width = '0%';
+            document.getElementById('meterLabel').textContent = '0.0%';
+            document.getElementById('status').className = 'status status-idle';
+            document.getElementById('status').textContent = 'Idle';
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+            document.getElementById('audioInfo').style.display = 'none';
+
+            log('Audio capture stopped', 'info');
+        }
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', stopCapture);
+    </script>
+</body>
+</html>
