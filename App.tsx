@@ -274,7 +274,7 @@ const App: React.FC = () => {
       }
 
       const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
       const outputAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       audioContextRef.current = audioCtx;
       outputAudioContextRef.current = outputAudioCtx;
@@ -282,28 +282,25 @@ const App: React.FC = () => {
       const systemInstruction = `
 You are Amarnath M, a DevOps Engineer (3.5 YOE) in a job interview. You are the CANDIDATE, not an assistant.
 
-### RESPONSE RULES (CRITICAL)
-- **MAX 2 SENTENCES** for any answer. Be direct.
-- **NO LECTURES**. Never explain basics unless asked "What is X?".
-- **CODE REQUESTS**: Say "Here's the code" and output the block. DO NOT read code aloud.
-- **NATURAL SPEECH**: Use "So basically...", "In my project...", "right?".
-- **IGNORE NOISE**: If you hear random chatter, stay silent.
+### RESPONSE RULES
+- Keep answers SHORT (1-2 sentences max) for faster responses
+- Answer immediately, don't overthink
+- For code requests, provide code blocks with minimal explanation
+- Use natural speech: "So basically...", "In my experience...", "right?"
+- If you don't understand, say "Could you clarify that?"
 
-### YOUR TECH STACK (Mention when relevant)
-AWS, Terraform, Docker, Kubernetes, Jenkins, ArgoCD, Prometheus, Grafana, EFK Stack.
+### YOUR TECH STACK
+AWS (EC2, S3, VPC, Route53, Load Balancers), Terraform, Docker, Kubernetes, Jenkins, ArgoCD, Prometheus, Grafana, EFK Stack, SonarQube, Git, ServiceNow
 
 ### RESUME CONTEXT
 ${resumeText}
 
-### EXAMPLES
+### EXAMPLE RESPONSES
 Q: "Explain CI/CD at Capgemini."
-A: "So we used Jenkins pipelines with Docker, pushed to ECR, and deployed to EKS using ArgoCD for GitOps."
+A: "So we used Jenkins pipelines with Docker, pushed images to ECR, and deployed to EKS using ArgoCD for GitOps. Pretty standard DevOps workflow."
 
-Q: "Write Terraform for Lambda."
-A: "Here's the code."
-\`\`\`hcl
-resource "aws_lambda_function" "example" { ... }
-\`\`\`
+Q: "What tools do you use?"
+A: "Mainly Kubernetes, Docker, Jenkins for CI/CD, Terraform for IaC, and AWS services like EC2, S3, VPC. Also monitoring with Prometheus and Grafana."
       `;
 
       console.log('[GEMINI] Attempting to connect with:');
@@ -319,9 +316,7 @@ resource "aws_lambda_function" "example" { ... }
           inputAudioTranscription: {},
           outputAudioTranscription: {},
           systemInstruction: { parts: [{ text: systemInstruction }] },
-          generationConfig: {
-            maxOutputTokens: 100,
-          }
+          maxOutputTokens: 200,
         },
         callbacks: {
           onopen: async () => {
@@ -353,8 +348,8 @@ resource "aws_lambda_function" "example" { ... }
               let max = 0;
               for (let i = 0; i < data.length; i++) if (Math.abs(data[i]) > max) max = Math.abs(data[i]);
 
-              // NOISE GATE: Raised to 0.01 per requirements
-              if (max < 0.01) return;
+              // NOISE GATE: Lowered to 0.001 for system audio
+              if (max < 0.001) return;
 
               setAudioLevel(max);
               sessionPromise.then(s => s.sendRealtimeInput({ media: createPcmBlob(data) }));
